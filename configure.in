@@ -1,0 +1,36 @@
+AC_INIT([Reforge], [0.1])
+AC_CONFIG_SRCDIR([Source/reforge/main.cpp])
+AM_INIT_AUTOMAKE([foreign subdir-objects])
+AC_PROG_CXX
+AC_PROG_RANLIB
+AC_LANG_CPLUSPLUS
+AC_CHECK_HEADERS([sys/types.h sys/stat.h stdio.h stdlib.h string.h errno.h])
+AC_CHECK_LIB([pthread], [pthread_create], [], [
+            echo "pthread library is missing. pthread is required for this program"
+            exit -1])
+
+AC_ARG_WITH(xstl,
+[  --with-xstl=<dir>   Select xStl path ],
+AC_MSG_NOTICE(Using xStl path from:$with_xstl), with_xstl="$XSTL_PATH")
+XSTL_PATH=$with_xstl
+AC_SUBST(XSTL_PATH)
+
+AC_ARG_WITH(pelib,
+[  --with-pelib=<dir>   Select lib PE path ],
+AC_MSG_NOTICE(Using lib PE path from:$with_pelib), with_pelib="$PELIB_PATH")
+PELIB_PATH=$with_pelib
+AC_SUBST(PELIB_PATH)
+
+AC_ARG_WITH(elflib,
+[  --with-elflib=<dir>   Select lib ELF path ],
+AC_MSG_NOTICE(Using lib ELF path from:$with_elflib), with_elflib="$ELFLIB_PATH")
+ELFLIB_PATH=$with_elflib
+AC_SUBST(ELFLIB_PATH)
+
+AC_ARG_WITH(dismount,
+[  --with-dismount=<dir>   Select dismount path ],
+AC_MSG_NOTICE(Using dismount path from:$with_dismount), with_dismount="$DISMOUNT_PATH")
+DISMOUNT_PATH=$with_dismount
+AC_SUBST(DISMOUNT_PATH)
+
+AC_OUTPUT([Makefile])
