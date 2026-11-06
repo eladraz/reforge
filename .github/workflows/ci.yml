@@ -1,0 +1,135 @@
+name: CI
+
+# All jobs use GitHub-hosted standard runners, which are free for public
+# repositories.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Branch of the sibling checkouts (xStl, pe, elf, dismount)
+  DEPS_REF: master
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.compiler }} ${{ matrix.build_type }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        build_type: [Debug, Release]
+    env:
+      CC: ${{ matrix.compiler }}
+      CXX: ${{ matrix.compiler == 'clang' && 'clang++' || 'g++' }}
+      # The sibling libraries locate xStl through this variable
+      XSTL_PATH: ${{ github.workspace }}/xStl
+    steps:
+      # The four siblings are checked out next to reforge, so the default
+      # ../xStl, ../pe, ../elf and ../dismount paths of CMakeLists.txt resolve
+      - uses: actions/checkout@v5
+        with:
+          path: reforge
+
+      - uses: actions/checkout@v5
+        with:
+          repository: eladraz/xStl
+          ref: ${{ env.DEPS_REF }}
+          path: xStl
+
+      - uses: actions/checkout@v5
+        with:
+          repository: eladraz/pe
+          ref: ${{ env.DEPS_REF }}
+          path: pe
+
+      - uses: actions/checkout@v5
+        with:
+          repository: eladraz/elf
+          ref: ${{ env.DEPS_REF }}
+          path: elf
+
+      - uses: actions/checkout@v5
+        with:
+          repository: eladraz/dismount
+          ref: ${{ env.DEPS_REF }}
+          path: dismount
+
+      # The end-to-end test runs the translated programs natively; it also
+      # needs the LLVM tools that scripts/mkpe.py and scripts/e2e.sh call
+      # without a version suffix (llvm-mc, ld.lld, llvm-readobj, llvm-objdump)
+      - name: Install tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm binutils file
+
+      - name: Put the LLVM tools on PATH
+        run: |
+          llvm_bin="$(ls -d /usr/lib/llvm-*/bin | sort -V | tail -n 1)"
+          echo "$llvm_bin" >> "$GITHUB_PATH"
+          export PATH="$llvm_bin:$PATH"
+          for tool in llvm-mc ld.lld llvm-readobj llvm-objdump; do
+            command -v "$tool" || { echo "::error::$tool not found in $llvm_bin"; exit 1; }
+          done
+
+      # Build the siblings the way their own CI builds them. Each library is
+      # written to <sibling>/out/lib, which reforge links against.
+      - name: Build xStl
+        working-directory: xStl
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          cmake --build build -j 4
+
+      - name: Build pe
+        working-directory: pe
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          cmake --build build -j 4
+
+      - name: Build elf
+        working-directory: elf
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          cmake --build build -j 4
+
+      - name: Build dismount
+        working-directory: dismount
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DDISMOUNT_BUILD_TESTS=ON
+          cmake --build build -j 4
+
+      # The unit tests (test_reforge) link the sibling libraries built above
+      - name: Build reforge
+        working-directory: reforge
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          cmake --build build -j 4
+
+      - name: Run unit tests
+        working-directory: reforge
+        run: ctest --test-dir build --output-on-failure
+
+      # Builds everything again from clean git archive copies of the siblings,
+      # then runs the acceptance checks; ends with "All N checks passed."
+      - name: Run end-to-end test
+        working-directory: reforge
+        run: scripts/e2e.sh
+
+      - name: Upload end-to-end logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs-${{ matrix.compiler }}-${{ matrix.build_type }}
+          path: reforge/out/e2e/logs
+          if-no-files-found: ignore
